@@ -1,0 +1,53 @@
+public with sharing class AssetInformation {
+
+    @AuraEnabled(cacheable=true)
+    public static List<Asset> getAllAssets() {
+        System.debug('getAllAssets called');
+        return [SELECT Id, SerialNumber, Interior_Color__c, Exterior_Color__c, Product2.Name FROM Asset WHERE Opportunity__c = NULL];
+    }
+
+    @AuraEnabled
+    public static String addAssetToOpportunity(Id opportunityId, List<Id> assetIds) {
+        System.debug('addAssetToOpportunity called with opportunityId: ' + opportunityId + ' and assetIds: ' + assetIds);
+        try {
+            List<Asset> assets = [SELECT Id, Opportunity__c, Product2Id FROM Asset WHERE Id IN :assetIds];
+            List<Asset> newList = new List<Asset>();
+            List<OpportunityLineItem> lineItems = new List<OpportunityLineItem>();
+
+            // Varsayılan Pricebook2 ID'sini al
+            Id standardPricebookId = [SELECT Id FROM Pricebook2 WHERE IsStandard = true LIMIT 1].Id;
+
+            for (Asset asset : assets) {
+                asset.Opportunity__c = opportunityId;
+                newList.add(asset);
+
+                List<PricebookEntry> pbes = [SELECT Id, UnitPrice FROM PricebookEntry WHERE Product2Id = :asset.Product2Id AND Pricebook2Id = :standardPricebookId LIMIT 1];
+                if (!pbes.isEmpty()) {
+                    PricebookEntry pbe = pbes[0];
+                    OpportunityLineItem oli = new OpportunityLineItem();
+                    oli.OpportunityId = opportunityId;
+                    oli.PricebookEntryId = pbe.Id;
+                    oli.Quantity = 1;
+                    oli.UnitPrice = pbe.UnitPrice;
+                    lineItems.add(oli);
+                } else {
+                    System.debug('No PricebookEntry found for Product2Id: ' + asset.Product2Id);
+                }
+            }
+
+            System.debug('Updating assets: ' + newList);
+            update newList;
+            System.debug('Inserting line items: ' + lineItems);
+            insert lineItems;
+
+            if (newList.size() > 0 && lineItems.size() > 0) {
+                return 'successful';
+            } else {
+                return 'error';
+            }
+        } catch (Exception e) {
+            System.debug('Error in addAssetToOpportunity: ' + e.getMessage());
+            return 'error';
+        }
+    }
+}
