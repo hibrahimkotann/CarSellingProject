@@ -1,0 +1,128 @@
+public class ProductIntegrationService2 {
+
+    // Constants for API credentials and endpoints
+    private static final String CLIENT_ID = '3MVG9qEXqmIutu_TLAclxL9DzmYiD9Qc5GSdf8MnVgxNFe8HFaJKMa2vW5NgbdjLuvVkYN4vW98czCxedWpnx';
+    private static final String CLIENT_SECRET = 'A7D63FA33FA44A50B09967E3FEF9BBEFB946A97D29F39F27D8D2F37D5396C93B';
+    private static final String USERNAME = 'info@silverlineteams.com.erp';
+    private static final String PASSWORD = 'silverlinewqerp123456';  // Include security token if required
+    private static final String TOKEN_ENDPOINT = 'https://test.salesforce.com/services/oauth2/token';
+    private static final String PRODUCT_ENDPOINT = 'https://wisequarter1--erp.sandbox.my.salesforce.com/services/apexrest/ProductWebService';
+
+    // Method to get access token
+    public static String getAccessToken() {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(TOKEN_ENDPOINT);
+        req.setMethod('POST');
+        req.setBody('grant_type=password' +
+                    '&client_id=' + CLIENT_ID +
+                    '&client_secret=' + CLIENT_SECRET +
+                    '&username=' + USERNAME +
+                    '&password=' + PASSWORD);
+        req.setHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+        Http http = new Http();
+        HttpResponse res = http.send(req);
+
+        if (res.getStatusCode() == 200) {
+            Map<String, Object> responseMap = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
+            return (String) responseMap.get('access_token');
+        } else {
+            System.debug('Error getting access token: ' + res.getBody());
+            return null;
+        }
+    }
+
+    // Method to get product details using the access token
+    public static void getProductDetails(String accessToken) {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(PRODUCT_ENDPOINT);
+        req.setMethod('GET');
+        req.setHeader('Authorization', 'Bearer ' + accessToken);
+        req.setHeader('Content-Type', 'application/json');
+
+        Http http = new Http();
+        HttpResponse res = http.send(req);
+
+        if (res.getStatusCode() == 200) {
+            String jsonBody = res.getBody(); 
+            Map<String, Object> results = (Map<String, Object>) JSON.deserializeUntyped(jsonBody);
+
+            List<Object> productList = (List<Object>) results.get('prodList');
+            System.debug('ProductList' + productList);
+
+            List<Product2> productsToInsert = new List<Product2>();
+            Map<String, Decimal> productPriceMap = new Map<String, Decimal>();
+
+            for (Object obj : productList) {
+                Map<String, Object> productData = (Map<String, Object>) obj;
+                Product2 product = new Product2();
+                product.Name = (String) productData.get('productName');
+                product.ProductCode = (String) productData.get('productCode');
+                product.ExternalId = (String) productData.get('productERPId');
+                product.Wheel_Drive__c = (String) productData.get('wheelDrive');
+                product.Gear__c = (String) productData.get('gear');
+                product.Body_Type__c = (String) productData.get('bodyType');
+                product.Engine_Capacity_cc__c = (String) productData.get('engineCapacity');
+                product.Fuel_Type__c = (String) productData.get('fuelType');
+                product.IsActive = (Boolean) productData.get('isActive');
+                product.Description = (String) productData.get('description');
+
+                productsToInsert.add(product);
+                productPriceMap.put(product.ExternalId, (Decimal) productData.get('unitPrice'));
+            }
+
+            if (!productsToInsert.isEmpty()) {
+                insert productsToInsert;
+                System.debug('Ürünler Salesforce\'a başarıyla eklendi.');
+
+                // PricebookEntry oluştur veya güncelle
+                List<PricebookEntry> pricebookEntriesToInsert = new List<PricebookEntry>();
+                List<PricebookEntry> pricebookEntriesToUpdate = new List<PricebookEntry>();
+
+                Id standardPricebookId = [SELECT Id FROM Pricebook2 WHERE IsStandard = true LIMIT 1].Id;
+
+                for (Product2 product : productsToInsert) {
+                    Decimal unitPrice = productPriceMap.get(product.ExternalId);
+
+                    List<PricebookEntry> existingEntries = [SELECT Id, UnitPrice FROM PricebookEntry WHERE Pricebook2Id = :standardPricebookId AND Product2Id = :product.Id];
+
+                    if (existingEntries.isEmpty()) {
+                        PricebookEntry pricebookEntry = new PricebookEntry();
+                        pricebookEntry.Pricebook2Id = standardPricebookId;
+                        pricebookEntry.Product2Id = product.Id;
+                        pricebookEntry.UnitPrice = unitPrice;
+                        pricebookEntry.IsActive = true;
+                        pricebookEntriesToInsert.add(pricebookEntry);
+                    } else {
+                        PricebookEntry existingEntry = existingEntries[0];
+                        existingEntry.UnitPrice = unitPrice;
+                        pricebookEntriesToUpdate.add(existingEntry);
+                    }
+                }
+
+                if (!pricebookEntriesToInsert.isEmpty()) {
+                    insert pricebookEntriesToInsert;
+                    System.debug('PricebookEntry kayıtları başarıyla eklendi.');
+                }
+
+                if (!pricebookEntriesToUpdate.isEmpty()) {
+                    update pricebookEntriesToUpdate;
+                    System.debug('Mevcut PricebookEntry kayıtları başarıyla güncellendi.');
+                }
+            } else {
+                System.debug('ERP sistemi tarafından dönen ürün bilgisi bulunamadı.');
+            }
+        } else {
+            System.debug('ERP sistemiyle iletişimde bir hata oluştu. Hata kodu: ' + res.getStatusCode());
+        }
+    }
+
+    // Invocable method to be called from Salesforce Flow
+    @InvocableMethod
+    public static void integrateProducts() {
+        String accessToken = getAccessToken();
+        if (accessToken != null) {
+            getProductDetails(accessToken);
+        }
+    }
+}
