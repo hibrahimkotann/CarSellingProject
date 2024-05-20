@@ -1,0 +1,20 @@
+<template>
+    <div class="slds-m-around_medium">
+        <lightning-card title="Assets" icon-name="standard:product">
+            <lightning-datatable
+                data={data}
+                columns={columns}
+                key-field="Id"
+                onrowselection={handleRowSelection}>
+            </lightning-datatable>
+
+            <div class="slds-m-top_medium slds-align_absolute-center">
+                <lightning-button
+                    variant="brand" 
+                    label="Link Assets" 
+                    onclick={handleLinkSelection}>
+                </lightning-button>
+            </div>
+        </lightning-card>
+    </div>
+</template>
